@@ -11,10 +11,15 @@ from tqdm import tqdm
 import psutil
 
 # ======================== НАСТРОЙКИ ========================
-loader_version = "1.0.8"  # Фикс user_data
+loader_version = "1.0.9"  # Поддержка Linux/macOS
 cheat_version = "1.5.0"
 VERSION_FILE_LOADER = "loader.version"
-CLIENT_DIR = r"C:\LauraClient"
+
+# Кроссплатформенный путь к папке клиента
+if sys.platform == "win32":
+    CLIENT_DIR = r"C:\LauraClient"
+else:
+    CLIENT_DIR = os.path.join(os.path.expanduser("~"), ".LauraClient")
 CLIENT_URL = "https://www.dropbox.com/scl/fi/800hclzzujbdj6hh44nt2/client.zip?rlkey=xvfy101lmuw1oafwqks4kre3i&st=ippl2vzk&dl=1"
 CONFIG_FILE = "loader_config.json"
 DEFAULT_JAVA_EXE = r""
@@ -28,6 +33,11 @@ GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/comm
 GITHUB_DOWNLOAD = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{GITHUB_BRANCH}/{GITHUB_JAR_PATH}"
 VERSION_FILE = os.path.join(CLIENT_DIR, ".jar_version")
 LOADER_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{GITHUB_BRANCH}/loader_version.txt"
+# URL для скачивания нового лоадера (на Windows - exe, на Linux/macOS - py)
+if sys.platform == "win32":
+    LOADER_DOWNLOAD_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{GITHUB_BRANCH}/LauraLoader.exe"
+else:
+    LOADER_DOWNLOAD_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{GITHUB_BRANCH}/LauraLoader.py"
 # ======================== CONFIG ===========================
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -85,6 +95,9 @@ def check_loader_update():
         print(f"[Лоадер] Ошибка проверки обновлений: {e}")
 
 def update_loader(github_version):
+    is_windows = sys.platform == "win32"
+    loader_name = "LauraLoader.exe" if is_windows else "LauraLoader.py"
+    new_name = "LauraLoader_new.exe" if is_windows else "LauraLoader_new.py"
     try:
         print("[Лоадер] Скачивание обновления...")
         r = requests.get(LOADER_DOWNLOAD_URL, stream=True, timeout=30)
@@ -92,15 +105,15 @@ def update_loader(github_version):
             print(f"[Лоадер] Ошибка скачивания (код {r.status_code})")
             return
         total = int(r.headers.get("content-length", 0))
-        bar = tqdm(total=total, unit="B", unit_scale=True, desc="LauraLoader.exe")
-        new_exe = "LauraLoader_new.exe"
-        with open(new_exe, "wb") as f:
+        bar = tqdm(total=total, unit="B", unit_scale=True, desc=loader_name)
+        with open(new_name, "wb") as f:
             for chunk in r.iter_content(8192):
                 bar.update(len(chunk))
                 f.write(chunk)
         bar.close()
         print("[Лоадер] Создание скрипта обновления...")
-        updater_script = f"""@echo off
+        if is_windows:
+            updater_script = f"""@echo off
 echo Обновление лоадера...
 timeout /t 2 /nobreak >nul
 taskkill /F /IM "LauraLoader.exe" >nul 2>&1
@@ -115,16 +128,35 @@ start "" "LauraLoader.exe"
 timeout /t 2 /nobreak >nul
 del "%~f0"
 """
-        with open("updater.bat", "w", encoding="utf-8") as f:
-            f.write(updater_script)
-        print("[Лоадер] Запуск обновления...")
-        subprocess.Popen(["updater.bat"], shell=True)
+            with open("updater.bat", "w", encoding="utf-8") as f:
+                f.write(updater_script)
+            print("[Лоадер] Запуск обновления...")
+            subprocess.Popen(["updater.bat"], shell=True)
+        else:
+            python_exe = sys.executable or "python3"
+            updater_script = f"""#!/bin/sh
+echo "Обновление лоадера..."
+sleep 2
+rm -f "LauraLoader.py"
+mv "LauraLoader_new.py" "LauraLoader.py"
+echo "{github_version}" > loader.version
+echo "Обновление завершено! Версия: {github_version}"
+sleep 1
+"{python_exe}" "LauraLoader.py" &
+sleep 2
+rm -- "$0"
+"""
+            with open("updater.sh", "w", encoding="utf-8") as f:
+                f.write(updater_script)
+            os.chmod("updater.sh", 0o755)
+            print("[Лоадер] Запуск обновления...")
+            subprocess.Popen(["/bin/sh", "updater.sh"])
         time.sleep(3)
         sys.exit(0)
     except Exception as e:
         print(f"[Лоадер] Ошибка обновления: {e}")
-        if os.path.exists("LauraLoader_new.exe"):
-            os.remove("LauraLoader_new.exe")
+        if os.path.exists(new_name):
+            os.remove(new_name)
 
 # ======================== DOWNLOAD =========================
 def download_and_extract():
@@ -296,7 +328,8 @@ def setup_java_path():
                 save_config(config)
                 print(f"\n[Успех] Путь к Java обновлён: {new_path}")
                 return
-    print("\nВведите путь к java.exe (или Enter для отмены):")
+    java_hint = "java.exe" if sys.platform == "win32" else "java"
+    print(f"\nВведите путь к {java_hint} (или Enter для отмены):")
     new_path = input("> ").strip().strip('"')
     if not new_path:
         print("[Отмена] Путь не изменён.")
@@ -360,13 +393,21 @@ def find_java_installations():
                     if os.path.exists(java_path) and verify_java_path(java_path):
                         java_paths.append(java_path)
     else:
-        search_dirs = ["/usr/lib/jvm", "/usr/java", "/opt/java"]
+        # Linux: сначала ищем java в PATH
+        import shutil
+        which_java = shutil.which("java")
+        if which_java:
+            real_java = os.path.realpath(which_java)
+            if verify_java_path(real_java) and real_java not in java_paths:
+                java_paths.append(real_java)
+        search_dirs = ["/usr/lib/jvm", "/usr/java", "/opt/java", "/usr/lib64/jvm",
+                       os.path.expanduser("~/.sdkman/candidates/java")]
         for base_dir in search_dirs:
             if os.path.exists(base_dir):
                 for root, dirs, files in os.walk(base_dir):
-                    if "java" in files and "bin" in root:
+                    if "java" in files and root.endswith("bin"):
                         java_path = os.path.join(root, "java")
-                        if verify_java_path(java_path):
+                        if verify_java_path(java_path) and java_path not in java_paths:
                             java_paths.append(java_path)
     return java_paths
 
@@ -381,6 +422,49 @@ def check_java_version(java_path):
     except:
         pass
     return None
+
+# ======================== TIME SYNC ========================
+def sync_windows_time():
+    """Синхронизация системного времени (кроссплатформенно)."""
+    try:
+        if sys.platform == "win32":
+            print("[Время] Синхронизация через w32tm...")
+            subprocess.run(["w32tm", "/resync"], capture_output=True, timeout=15)
+            print("[Время] Синхронизация выполнена ✓")
+        else:
+            print("[Время] Попытка синхронизации через timedatectl...")
+            result = subprocess.run(["timedatectl", "set-ntp", "true"],
+                                    capture_output=True, text=True, timeout=15)
+            if result.returncode == 0:
+                print("[Время] NTP-синхронизация включена ✓")
+            else:
+                print("[Время] Не удалось (возможно нужен sudo): sudo timedatectl set-ntp true")
+    except FileNotFoundError:
+        print("[Время] Утилита синхронизации не найдена в системе.")
+    except Exception as e:
+        print(f"[Время] Ошибка синхронизации: {e}")
+
+def check_system_time():
+    """Сравнение системного времени с интернет-временем."""
+    try:
+        r = requests.get("https://worldtimeapi.org/api/ip", timeout=10)
+        if r.status_code == 200:
+            server_unix = r.json().get("unixtime")
+            if server_unix:
+                diff = abs(time.time() - server_unix)
+                if diff < 60:
+                    print(f"[Время] Системное время корректно (расхождение {int(diff)} сек) ✓")
+                else:
+                    print(f"[Время] ВНИМАНИЕ: расхождение времени {int(diff)} сек!")
+                return
+        print("[Время] Не удалось проверить время через интернет.")
+    except Exception as e:
+        print(f"[Время] Ошибка проверки времени: {e}")
+
+# ======================== AUTH =============================
+def auth():
+    """Заглушка авторизации (оригинальная функция отсутствовала в файле)."""
+    pass
 
 # ======================== RUN ==============================
 def run_cheat():
