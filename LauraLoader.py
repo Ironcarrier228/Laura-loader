@@ -8,7 +8,6 @@ import hashlib
 import json
 import webbrowser
 from tqdm import tqdm
-from keyauth import api
 import psutil
 
 # ======================== НАСТРОЙКИ ========================
@@ -18,7 +17,7 @@ VERSION_FILE_LOADER = "loader.version"
 CLIENT_DIR = r"C:\LauraClient"
 CLIENT_URL = "https://www.dropbox.com/scl/fi/800hclzzujbdj6hh44nt2/client.zip?rlkey=xvfy101lmuw1oafwqks4kre3i&st=ippl2vzk&dl=1"
 CONFIG_FILE = "loader_config.json"
-DEFAULT_JAVA_EXE = r"C:\Program Files\Eclipse Adoptium\jdk-17.0.15.6-hotspot\bin\java.exe"
+DEFAULT_JAVA_EXE = r""
 
 # ======================== GITHUB ===========================
 GITHUB_USER = "Ironcarrier228"
@@ -29,8 +28,6 @@ GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/comm
 GITHUB_DOWNLOAD = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{GITHUB_BRANCH}/{GITHUB_JAR_PATH}"
 VERSION_FILE = os.path.join(CLIENT_DIR, ".jar_version")
 LOADER_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{GITHUB_BRANCH}/loader_version.txt"
-LOADER_DOWNLOAD_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{GITHUB_BRANCH}/LauraLoader.exe"
-
 # ======================== CONFIG ===========================
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -47,77 +44,6 @@ def save_config(config):
 
 config = load_config()
 JAVA_EXE = config.get("java_path", DEFAULT_JAVA_EXE)
-
-# ======================== KEYAUTH ==========================
-def getchecksum():
-    md5 = hashlib.md5()
-    with open(sys.argv[0], "rb") as f:
-        md5.update(f.read())
-    return md5.hexdigest()
-
-keyauthapp = api(
-    name="Elhan",
-    ownerid="AtwJqdx5tK",
-    version="1.0",
-    hash_to_check=getchecksum()
-)
-
-# ======================== TIME SYNC ========================
-def sync_windows_time():
-    print("[Время] Синхронизация времени Windows...")
-    try:
-        result = subprocess.run(["w32tm", "/resync", "/force"], capture_output=True, text=True, timeout=10)
-        if result.returncode == 0:
-            print("[Время] Синхронизация успешна ✓")
-            time.sleep(2)
-            return True
-        else:
-            print(f"[Время] Ошибка: {result.stderr}")
-            return False
-    except Exception as e:
-        print(f"[Время] Ошибка: {e}")
-        return False
-
-def check_system_time():
-    try:
-        import ntplib
-        client = ntplib.NTPClient()
-        response = client.request('pool.ntp.org', version=3, timeout=5)
-        from datetime import datetime
-        server_time = datetime.fromtimestamp(response.tx_time)
-        local_time = datetime.now()
-        time_diff = abs(response.offset)
-        print(f"[Время] Сервер NTP: {server_time.strftime('%H:%M:%S')}")
-        print(f"[Время] Локальное:  {local_time.strftime('%H:%M:%S')}")
-        print(f"[Время] Разница:    {time_diff:.2f} сек")
-        if time_diff > 5:
-            print("\n[Предупреждение] Время сильно отличается!")
-            return False
-        return True
-    except Exception as e:
-        print(f"[Время] Не удалось проверить NTP: {e}")
-        return False
-
-def force_time_sync():
-    print("\n[Время] Проверка синхронизации...")
-    if check_system_time():
-        print("[Время] Время синхронизировано ✓\n")
-        return True
-    print("\n[Время] Попытка автоматической синхронизации...")
-    if sync_windows_time():
-        print("[Время] Повторная проверка...")
-        time.sleep(2)
-        if check_system_time():
-            print("[Время] Время успешно синхронизировано ✓\n")
-            return True
-    print("\n[Предупреждение] Не удалось синхронизировать время автоматически")
-    print("\nДля ручного исправления:")
-    print("  1. Откройте командную строку ОТ АДМИНИСТРАТОРА")
-    print("  2. Введите: w32tm /resync /force")
-    print("  3. Запустите лоадер снова")
-    print()
-    choice = input("Продолжить без синхронизации? (y/n): ").lower()
-    return choice == 'y'
 
 # ======================== LOADER UPDATE ====================
 def get_loader_version():
@@ -199,64 +125,6 @@ del "%~f0"
         print(f"[Лоадер] Ошибка обновления: {e}")
         if os.path.exists("LauraLoader_new.exe"):
             os.remove("LauraLoader_new.exe")
-
-# ======================== AUTH =============================
-def auth():
-    current_version = get_loader_version()
-    print(f"\n{'='*50}")
-    print(f"Laura Client Loader v{current_version}")
-    print(f"{'='*50}\n")
-    check_loader_update()
-    if not force_time_sync():
-        print("\n[Ошибка] Требуется синхронизация времени для авторизации")
-        input("Нажмите Enter для выхода...")
-        sys.exit(1)
-    print("[Сеть] Проверка подключения...")
-    try:
-        requests.get("https://keyauth.com", timeout=5)
-        print("[Сеть] Подключение есть ✓\n")
-    except:
-        print("[Ошибка] Нет подключения к интернету!")
-        input("\nНажмите Enter для выхода...")
-        sys.exit(1)
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            key = input(f"Введите ключ (попытка {attempt + 1}/{max_retries}): ")
-            print("[Авторизация] Проверка ключа...")
-            keyauthapp.license(key)
-            if keyauthapp.sessionid:
-                print(f"\n[Успех] Авторизация прошла успешно!")
-                try:
-                    print(f"  Пользователь: {keyauthapp.user_data.username}")
-                    print(f"  Срок действия: {keyauthapp.user_data.expiry}")
-                except:
-                    pass
-                print()
-                return
-            else:
-                print(f"[Ошибка] Не удалось авторизоваться")
-        except Exception as e:
-            error_msg = str(e)
-            print(f"\n[Ошибка KeyAuth] {type(e).__name__}: {error_msg}")
-            if "Timestamp" in error_msg or "timestamp" in error_msg.lower():
-                print("\n[Ошибка] Проблема со временем!")
-                print("Запуск повторной синхронизации...")
-                sync_windows_time()
-                print("Попробуйте ввести ключ снова")
-            elif "network" in error_msg.lower() or "connection" in error_msg.lower():
-                print("\n[Ошибка] Проблема с подключением к интернету")
-            elif "invalid" in error_msg.lower() or "key" in error_msg.lower():
-                print("\n[Ошибка] Неверный или истёкший ключ")
-            else:
-                print(f"\n[Ошибка] Неизвестная ошибка: {error_msg}")
-            if attempt < max_retries - 1:
-                print(f"\n[Попытка] Повтор через 3 секунды...\n")
-                time.sleep(3)
-            else:
-                print("\n[Ошибка] Превышено количество попыток")
-                input("Нажмите Enter для выхода...")
-                sys.exit(1)
 
 # ======================== DOWNLOAD =========================
 def download_and_extract():
